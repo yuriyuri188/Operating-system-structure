@@ -20,9 +20,9 @@ typedef struct job {
 } job;
 
 typedef struct job_arr {
-    job jobs[MAX_ARGS + 2];
+    job jobs[MAX_ARGS];
     int job_counter;
-    int smallest_id;
+    int smallest_free_id;
 } job_arr;
 
 
@@ -41,7 +41,7 @@ void init_job(job* j) {
 
 void init_job_arr(job_arr* arr) {
     arr->job_counter = 0;
-    arr->smallest_id = 1;
+    arr->smallest_free_id = 1;
     for (int i = 0; i < MAX_ARGS + 1; i++) {
         init_job(&arr->jobs[i]);
     }
@@ -49,7 +49,7 @@ void init_job_arr(job_arr* arr) {
 
 
 /*=============================================================================
-* C equivalents of your class methods
+* 
 =============================================================================*/
 
 int find_by_id(job_arr* arr, pid_t pid) {
@@ -62,8 +62,8 @@ int find_by_id(job_arr* arr, pid_t pid) {
 }
 
 int job_status_change (job_arr* arr, pid_t pid, char cur_status){
-    for(int j=0, j<MAX_ARGS+1, j++){
-        if(arr->jobs[j].pid == pid){
+    for(int j=1; j<MAX_ARGS+1; j++){
+        if ((arr->jobs[j].pid == pid)){
             arr->jobs[j].status=cur_status;
             return 0;
         }
@@ -72,7 +72,7 @@ int job_status_change (job_arr* arr, pid_t pid, char cur_status){
     return 1;    
 }
 
-void print_all_jobs(job_arr* arr) {
+void print_all_bg_jobs(job_arr* arr) {
     for (int j = 1; j < MAX_ARGS + 1; j++) {
         if (arr->jobs[j].full) {
             printf("[%d] %s: %d %ld secs",
@@ -88,4 +88,88 @@ void print_all_jobs(job_arr* arr) {
             printf("\n");
         }
     }
+}
+
+void print_fg_job(job_arr* arr) {
+     printf("[%d] %s: %d %ld secs",
+                   0,
+                   arr->jobs[0].command,
+                   arr->jobs[0].pid,
+                   (long)difftime(time(NULL), arr->jobs[0].time_stamp)
+            );
+}
+
+
+int move_job_to_fg(job_arr* arr, pid_t pid){
+    for (int j = 1; j < MAX_ARGS + 1; j++) {
+        if (arr->jobs[j].pid == pid) {
+            arr->jobs[0].pid = pid;
+			strcpy(arr->jobs[0].command,arr->jobs[j].command);
+            arr->jobs[0].time_stamp = arr->jobs[j].time_stamp;
+            arr->jobs[0].status = FG;
+            arr->jobs[j].full = false;
+            arr->jobs[0].full = true;
+            if (smallest_free_id > j) {
+                smallest_free_id = j;
+            }
+            return 0;
+        }
+    }
+    printf("move_job_to_fg failed\n")
+    return 1;
+}
+
+void remove_job_from_fg(job_arr* arr){
+    
+    if(){ //job stopped because cntrl z
+        arr->jobs[0].status = STOPPED;
+        add_job(arr, 0, STOPPED);  //not complete
+    }
+    
+    else if(pid == jobs[0].pid)							//fg reaped
+		arr->jobs[0].full = false;
+        arr->jobs[0].pid=getpid();
+	return;
+}
+
+
+void delete_complex_job(job_arr* arr, pid_t complex_pid, int complex_i, int smallest_free_id) {
+
+    if (complex_i < 1 || complex_i > MAX_ARGS) {
+        printf("smash error: invalid job index\n");
+        return;
+    }
+
+    if (arr->jobs[complex_i].pid != complex_pid || !arr->jobs[complex_i].full) {
+        printf("smash error: job not found\n");
+        return;
+    }
+
+
+    if (smallest_free_id > complex_i) {
+        smallest_free_id = complex_i;
+    }
+
+    arr->jobs[complex_i].full = 0;
+   // init_job(&arr->jobs[complex_i]);
+
+    return;
+}
+
+int add_job(job_arr* arr, pid_t pid, char cur_status){
+
+}
+
+void delete_job(){
+    for (int j = 1; j <= MAX_ARGS + 1; j++) {
+        if (arr->jobs[j].full) {
+            
+            if (smallest_free_id > j) {
+                smallest_free_id = j;
+            }    
+            arr->jobs[j].full = false;
+            return ;
+        }
+    }
+
 }
