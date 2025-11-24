@@ -3,6 +3,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <stdbool.h>
+
 
 #define FG       '1'
 #define BG       '2'
@@ -20,7 +22,7 @@ typedef struct job {
 } job;
 
 typedef struct job_arr {
-    job jobs[MAX_ARGS];
+    job jobs[MAX_ARGS+1];
     int job_counter;
     int smallest_free_id;
 } job_arr;
@@ -157,8 +159,45 @@ void delete_complex_job(job_arr* arr, pid_t complex_pid, int complex_i, int smal
 }
 
 int add_job(job_arr* arr, pid_t pid, char cur_status){
+    
+    int id = arr->smallest_free_id;
 
+    if (id < 1 || id > MAX_ARGS) {
+        printf("smash error: jobs list full\n");
+        return -1;
+    }
+
+    if (cur_status == FG) {
+    strcpy(arr->jobs[0].command, command);
+    arr->jobs[0].pid = pid;
+    arr->jobs[0].status = cur_status;
+    arr->jobs[0].time_stamp = time(NULL);
+    arr->jobs[0].full = 1;
+    return 0;
+    }
+
+    else{
+        arr->jobs[id].pid = pid;
+        arr->jobs[id].status = cur_status;
+        arr->jobs[id].time_stamp = time(NULL);
+        strcpy(arr->jobs[id].command, command);
+        arr->jobs[id].full = 1;
+    }
+
+    for (int i = id + 1; i <= MAX_ARGS; i++) {
+        if (!arr->jobs[i].full) {
+            arr->smallest_free_id = i;
+            break;
+        }
+    }
+
+    arr->smallest_free_id = MAX_ARGS + 1;
+
+    return 0;
 }
+
+
+
 
 void delete_job(){
     for (int j = 1; j <= MAX_ARGS + 1; j++) {
