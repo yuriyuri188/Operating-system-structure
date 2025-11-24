@@ -85,7 +85,7 @@ void ctrl_z(int sig) {
         if (kill(pid, SIGSTOP) == 0) {
             printf("smash: process %d was stopped\n");
             fflush(stdout);
-            job_list.fg_job_remove(pid, 1);
+            job_list.remove_job_from_fg(pid, 1);
         } else {
             perror("smash error: kill failed");
         }
