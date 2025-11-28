@@ -93,7 +93,11 @@ void print_all_bg_jobs(job_arr* arr) {
 }
 
 void print_fg_job(job_arr* arr) {
-     printf("[%d] %s: %d %ld secs",
+    if (!arr->jobs[0].full)
+        return;
+
+    
+    printf("[%d] %s: %d %ld secs",
                    0,
                    arr->jobs[0].command,
                    arr->jobs[0].pid,
@@ -102,7 +106,7 @@ void print_fg_job(job_arr* arr) {
 }
 
 
-int move_job_to_fg(job_arr* arr, pid_t pid){
+int move_job_to_fg(job_arr* arr, pid_t pid){   //to change
     for (int j = 1; j < MAX_ARGS + 1; j++) {
         if (arr->jobs[j].pid == pid) {
             arr->jobs[0].pid = pid;
@@ -111,6 +115,7 @@ int move_job_to_fg(job_arr* arr, pid_t pid){
             arr->jobs[0].status = FG;
             arr->jobs[j].full = false;
             arr->jobs[0].full = true;
+            
             if (smallest_free_id > j) {
                 smallest_free_id = j;
             }
@@ -121,7 +126,7 @@ int move_job_to_fg(job_arr* arr, pid_t pid){
     return 1;
 }
 
-void remove_job_from_fg(job_arr* arr){
+void remove_job_from_fg(job_arr* arr){  // to change
     
     if(){ //job stopped because cntrl z
         arr->jobs[0].status = STOPPED;
@@ -134,8 +139,8 @@ void remove_job_from_fg(job_arr* arr){
 	return;
 }
 
-
-void delete_complex_job(job_arr* arr, pid_t complex_pid, int complex_i, int smallest_free_id) {
+// tho change
+void delete_complex_job(job_arr* arr, pid_t complex_pid, int complex_i, int   smallest_free_id) {                                                            
 
     if (complex_i < 1 || complex_i > MAX_ARGS) {
         printf("smash error: invalid job index\n");
@@ -158,7 +163,7 @@ void delete_complex_job(job_arr* arr, pid_t complex_pid, int complex_i, int smal
     return;
 }
 
-int add_job(job_arr* arr, pid_t pid, char cur_status){
+int add_job(job_arr* arr, pid_t pid, char cur_status, const char* command){  // to change
     
     int id = arr->smallest_free_id;
 
@@ -199,7 +204,7 @@ int add_job(job_arr* arr, pid_t pid, char cur_status){
 
 
 
-void delete_job(){
+void delete_job(job_arr* arr, pid_t pid){ // to change
     for (int j = 1; j <= MAX_ARGS + 1; j++) {
         if (arr->jobs[j].full) {
             
