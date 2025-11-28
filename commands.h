@@ -6,10 +6,14 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+
 #define CMD_LENGTH_MAX 80
 #define ARGS_NUM_MAX 20
 #define JOBS_NUM_MAX 100
+#define MAX_JOBS JOBS_NUM_MAX
 #define BUF_SIZE 4096
+
+
 
 /*=============================================================================
 * error handling - some useful macros and examples of error handling,
@@ -51,28 +55,41 @@ typedef enum {
 } CommandResult;
 
 /*=============================================================================
+* forward declarations
+=============================================================================*/
+typedef struct job_arr job_arr;
+
+/*=============================================================================
 * global functions
 
 =============================================================================*/
 int parseCommandExample(char* line);
 
-int cmd_showpid(char **args, int argc);
+int showpid(char **args, int argc);
 
 int pwd(char **args, int argc);
 
 int cd(char **args, int argc);
 
-int quit(char **args, int argc);
+int quit(char **args, int argc, job_arr *jobs);
 
-int jobs(char **args, int argc);
+int jobs(char **args, int argc, job_arr *arr);
 
-int fg(char **args, int argc);
+int fg(char **args, int argc, job_arr *jobs);
 
-int bg(char **args, int argc);
+int bg(char **args, int argc, job_arr *jobs);
 
-int kill(char **args, int argc);
+int kill(char **args, int argc, job_arr *jobs);
 
 int cmd_diff(char **args, int argc);
+
+int parseCommand(char *cmd);
+
+int command_Manager(int numArgs, char *original_line);
+
+int run_external_command(char **argv, const char *original_line);
+
+int handle_compound_commands(char *line);
 
 
 
