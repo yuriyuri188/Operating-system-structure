@@ -1,12 +1,13 @@
 #ifndef SIGNALS_H
 #define SIGNALS_H
 
-/*=============================================================================
-* includes, defines, usings
-=============================================================================*/
+#include <signal.h>
 
-/*=============================================================================
-* global functions
-=============================================================================*/
+/* install all signal handlers */
+void install_signal_handlers(void);
 
-#endif //__SIGNALS_H__
+/* signal handlers */
+void ctrl_c(int sig);
+void ctrl_z(int sig);
+
+#endif /* SIGNALS_H */
