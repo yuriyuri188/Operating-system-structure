@@ -4,6 +4,9 @@ SRCS = $(wildcard *.c)
 OBJS = $(SRCS:.c=.o)
 TARGET = smash
 
+WRAPPER = my_system_call_c.o
+
+
 all: $(TARGET)
 
 $(TARGET): $(OBJS)

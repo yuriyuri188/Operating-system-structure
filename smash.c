@@ -54,6 +54,8 @@ int main(int argc, char* argv[])
 			continue;
 		}
 
+		update_jobs(&job_list); //before running any command, clean up finished jobs
+
 		 // ===== detect compound command (&&) =====
         if (strstr(_line, "&&") != NULL) {
             // handle chain "cmd1 && cmd2 && cmd3"

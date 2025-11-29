@@ -4,67 +4,81 @@
 #include <time.h>
 #include <sys/types.h>
 #include <stdbool.h>
+#include "commands.h"   // for CMD_LENGTH_MAX and JOBS_NUM_MAX
 
 /*=============================================================================
-* defines
+* flags
 =============================================================================*/
 #define FG       '1'
 #define BG       '2'
 #define STOPPED  '3'
 
-#define MAX_LINE_SIZE 80
-#define MAX_ARGS 100
 
 /*=============================================================================
 * structs
 =============================================================================*/
 typedef struct job {
     pid_t pid;
-    char command[MAX_LINE_SIZE];
+    char command[CMD_LENGTH_MAX];
     time_t time_stamp;
     char status;
     bool full;
-    char prev_wd[MAX_LINE_SIZE];
-    bool is_external;
+    //char prev_wd[CMD_LENGTH_MAX];
+    //bool is_external;
 } job;
 
 typedef struct job_arr {
-    job jobs[MAX_ARGS + 1];   /* index 0 = FG , 1..MAX_ARGS = BG */
-    int job_counter;
-    int smallest_free_id;
+    job jobs[JOBS_NUM_MAX + 1];   /* index 0 = FG , 1..MAX_ARGS = BG */
+    int job_counter;     // how many BG/STOPPED jobs (not counting fg)
+    int smallest_free_id;  // smallest free index in 1..JOBS_NUM_MAX
 } job_arr;
 
 /*=============================================================================
 * init
 =============================================================================*/
 void init_job(job* j);
+
 void init_job_arr(job_arr* arr);
 
 /*=============================================================================
 * helpers
 =============================================================================*/
-int find_by_id(job_arr* arr, pid_t pid);
+// find background job index by pid, returns job_id in [1..JOBS_NUM_MAX] or -1
+int find_by_pid(job_arr* arr, pid_t pid);
+
+// change status of job by pid, returns 0 on success, -1 if not found
 int job_status_change(job_arr* arr, pid_t pid, char cur_status);
 
 /*=============================================================================
 * printing
 =============================================================================*/
 void print_all_bg_jobs(job_arr* arr);
+
 void print_fg_job(job_arr* arr);
 
 /*=============================================================================
 * job manipulation
 =============================================================================*/
-int add_job(job_arr* arr, pid_t pid, char status, const char* command);
+// add job, status should be FG or BG (STOPPED is set later when signal happens)
+int add_job(job_arr* arr, pid_t pid, const char* command, char status);
 
-int move_job_to_fg(job_arr* arr, pid_t pid);
-void remove_job_from_fg(job_arr* arr);
+// move BG/STOPPED job [job_id] (1..JOBS_NUM_MAX) into foreground slot (jobs[0])
+int move_job_to_fg(job_arr* arr, int job_id);
+
+// clear fg slot after job finished
+void clear_fg_job(job_arr *arr);
+
+void update_jobs(job_arr *arr);
+
+
+
 
 /*=============================================================================
 * delete
 =============================================================================*/
-void delete_job(job_arr* arr, pid_t pid);
+// delete BG/STOPPED job by job_id in [1..JOBS_NUM_MAX]
+void delete_job(job_arr* arr, int job_id);
 
-void delete_complex_job(job_arr* arr, pid_t complex_pid, int complex_i, int   smallest_free_id);
+//void delete_complex_job(job_arr* arr, pid_t complex_pid, int complex_i, int   smallest_free_id);
 
 #endif /* JOBS_H */

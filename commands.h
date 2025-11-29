@@ -5,15 +5,20 @@
 =============================================================================*/
 #include <stdlib.h>
 #include <stdio.h>
+#include "jobs.h"
+
 
 
 #define CMD_LENGTH_MAX 80
 #define ARGS_NUM_MAX 20
 #define JOBS_NUM_MAX 100
-#define MAX_JOBS JOBS_NUM_MAX
+#define MAX_JOBS 100
 #define BUF_SIZE 4096
+#define PATH_MAX 4096
 
 
+extern char *g_argv[ARGS_NUM_MAX + 1];
+extern int   g_is_bg;   // 1 if command ended with &
 
 /*=============================================================================
 * error handling - some useful macros and examples of error handling,
@@ -54,16 +59,12 @@ typedef enum {
 	//feel free to add more values here or delete this
 } CommandResult;
 
-/*=============================================================================
-* forward declarations
-=============================================================================*/
-typedef struct job_arr job_arr;
+
 
 /*=============================================================================
 * global functions
 
 =============================================================================*/
-int parseCommandExample(char* line);
 
 int showpid(char **args, int argc);
 
@@ -83,11 +84,20 @@ int kill(char **args, int argc, job_arr *jobs);
 
 int cmd_diff(char **args, int argc);
 
+/* parsing & dispatch */
+
 int parseCommand(char *cmd);
+
+// dispatcher: choose built-in vs external
+// numArgs is argc from parseCommand; original_line is the full, unmodified line.
 
 int command_Manager(int numArgs, char *original_line);
 
+/* external commands */
+
 int run_external_command(char **argv, const char *original_line);
+
+/* compound commands with && */
 
 int handle_compound_commands(char *line);
 

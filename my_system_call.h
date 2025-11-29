@@ -29,4 +29,3 @@
  */long my_system_call(int syscall_number, ...);
 
 #endif
-but

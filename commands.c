@@ -4,11 +4,22 @@
 #include <string.h>
 #include "my_system_call.h"
 #include <sys/stat.h>
+#include <fcntl.h>      // O_RDONLY
 #include <unistd.h>     // sleep
 #include <sys/wait.h>
+#include <limits.h>     // PATH_MAX
+#include "jobs.h"
 
 
+
+// job table is actually defined in smash.c
 extern job_arr job_list;
+
+// global argv buffer for the current simple command
+char *g_argv[ARGS_NUM_MAX + 1];
+
+// 1 if the current command should run in background (ends with '&')
+int g_is_bg = 0;
 
 
 
@@ -62,8 +73,8 @@ int showpid(char **args, int argc)
 {
     if (argc != 0)
 	{
-		fprintf(stderr, "smash error: pwd: expected 0 arguments\n");
-		return -1;
+		fprintf(stderr, "smash error: showpid: expected 0 arguments\n");
+		return 1;
 		}
 	
 		printf("smash pid is %d\n", getpid());
@@ -77,7 +88,7 @@ int pwd(char **args, int argc)
 	if (argc != 0)
 	{
 		fprintf(stderr, "smash error: pwd: expected 0 arguments\n");
-		return -1;
+		return 1;
 		}
 
 	
@@ -85,7 +96,7 @@ int pwd(char **args, int argc)
 		if (getcwd(path, CMD_LENGTH_MAX) == NULL)
 		{
 			fprintf(stderr, "smash error: pwd: getcwd failed\n");
-			return -1;
+			return 1;
 		}
 
 		printf("%s\n", path);
@@ -99,7 +110,7 @@ int cmd_diff(char **args, int argc)
 	if (argc != 2)
 	{
 		fprintf(stderr, "smash error: diff: expected 2 arguments\n");
-		return -1;
+		return 1;
 	}
 
 	const char *path1 = args[1];
@@ -110,21 +121,21 @@ int cmd_diff(char **args, int argc)
 	if (stat(path1, &st1) != 0 || stat(path2, &st2) != 0) 
 	{
 		fprintf(stderr, "smash error: diff: expected valid paths for files\n");
-		return -1;
+		return 1;
 	}
 
 	//  Check that both are regular files
 	if (!S_ISREG(st1.st_mode) || !S_ISREG(st2.st_mode))
 	{
 		fprintf(stderr, "smash error: diff: paths are not files\n");
-		return -1;
+		return 1;
 	}
 
 	int fd1 = (int)my_system_call(SYS_OPEN, path1, O_RDONLY, 0);
 	if (fd1 == -1)
 	{
 		fprintf(stderr, "smash error: diff: expected valid paths for files\n");
-		return -1;
+		return 1;
 	}
 
 	int fd2 = (int)my_system_call(SYS_OPEN, path2, O_RDONLY, 0);
@@ -132,7 +143,7 @@ int cmd_diff(char **args, int argc)
 	{
 		my_system_call(SYS_CLOSE, fd1);
 		fprintf(stderr, "smash error: diff: expected valid paths for files\n");
-		return -1;
+		return 1;
     }
 
 	unsigned char buf1[BUF_SIZE], buf2[BUF_SIZE];
@@ -184,7 +195,7 @@ int cmd_diff(char **args, int argc)
 // #########################################################################################
 
 
-static char old_pwd[CMD_LENGTH_MAX] = {0}; // Persistent state
+static char old_pwd[PATH_MAX] = {0}; // Persistent state
 static int old_pwd_set = 0; //  Flag for first use
 
 int cd(char **args, int argc)
@@ -194,7 +205,7 @@ int cd(char **args, int argc)
 		// argc = number of arguments AFTER "cd"
 		// so if argc = 1, there is no path to change to
 		fprintf(stderr, "smash error: cd: expected 1 arguments\n");
-		return -1;
+		return 1;
 	}
 	
 	const char *target = args[1]; //
@@ -204,41 +215,41 @@ int cd(char **args, int argc)
 	{
 		if (!old_pwd_set) {
             fprintf(stderr, "smash error: cd: old pwd not set\n");
-            return -1;
+            return 1;
         }
         target = old_pwd;  // go to previous directory
 	}
 
 
 // 2) Save current directory before changing
-    char current_pwd[CMD_LENGTH_MAX];
+    char current_pwd[PATH_MAX];
     if (getcwd(current_pwd, sizeof(current_pwd)) == NULL) {
 	// If this fails, something is very wrong – but just report and stop
-	      perror("smash error:: getcwd failed");
-	      return -1;
+	      perror("smash error: cd: getcwd failed");
+	      return 1;
         }
 
 // 3) Check that target exists and is a directory
     struct stat st;
     if (stat(target, &st) != 0) {
 	      fprintf(stderr, "smash error: cd: target directory does not exist\n");
-	      return -1;
+	      return 1;
         }
 
     if (!S_ISDIR(st.st_mode)) {
 	     fprintf(stderr, "smash error: cd: %s: not a directory\n", target);
-	     return -1;
+	     return 1;
         }
 
 // 4) Actually change directory
     if (chdir(target) != 0) {
-        perror("smash error:: chdir failed");
-        return -1;
+        perror("smash error: cd: chdir failed");
+        return 1;
         }
 
 // 5) Update old_pwd only AFTER successful cd
-    strncpy(old_pwd, current_pwd, CMD_LENGTH_MAX - 1);
-    old_pwd[CMD_LENGTH_MAX - 1] = '\0';
+    strncpy(old_pwd, current_pwd, PATH_MAX - 1);
+    old_pwd[PATH_MAX - 1] = '\0';
     old_pwd_set = 1;
 
     return 0;
@@ -250,19 +261,25 @@ int jobs(char **args, int argc, job_arr *arr)
 {
     if(argc != 0){
         fprintf(stderr, "smash error: jobs: expected 0 arguments\n");
-        return -1;
+        return 1;
     }
 
-    print_all_jobs(arr);
+    update_jobs(arr);
+
+    print_all_bg_jobs(arr);
     return 0;
 }
 
+
+
+//####################################################################################
+
 int kill(char **args, int argc, job_arr *jobs)
 {
-	    // 1. Check argument count: must be exactly 2
+	    //  Check argument count: must be exactly 2
 		if (argc != 2) {
 			fprintf(stderr, "smash error: kill: invalid arguments\n");
-			return -1;
+			return 1;
 		}
 
 		char *endptr1;
@@ -272,7 +289,7 @@ int kill(char **args, int argc, job_arr *jobs)
 			if (*args[1] == '\0' || *endptr1 != '\0' ||
 				signum_long <= 0 || signum_long > INT_MAX) {
 				fprintf(stderr, "smash error: kill: invalid arguments\n");
-				return -1;
+				return 1;
 			}
 			int signum = (int)signum_long;
 
@@ -283,24 +300,23 @@ int kill(char **args, int argc, job_arr *jobs)
 		if (*args[2] == '\0' || *endptr2 != '\0' ||
 				job_id_long <= 0 || job_id_long > MAX_JOBS) {
 				fprintf(stderr, "smash error: kill: invalid arguments\n");
-				return -1;
+				return 1;
 			}
 		int job_id = (int)job_id_long;
 
-		int index = find_by_job_id(jobs, job_id);   //  Find the job by job_id
-        if (index == -1) {
-                fprintf(stderr, "smash error: kill: job id %d does not exist\n", job_id);
-                return -1;
-             }
+		if (job_id < 1 || job_id > MAX_JOBS || !jobs->jobs[job_id].full) {
+			fprintf(stderr, "smash error: kill: job id %d does not exist\n", job_id);
+			return 1;
+		}
 
 		// ---------- send the signal via wrapper ----------
-		pid_t pid = jobs->jobs[index].pid;
+		pid_t pid = jobs->jobs[job_id].pid;
 		long ret = my_system_call(SYS_KILL, pid, signum);
 		if (ret == -1) {
-			// System-level error (very rare); assignment doesn’t specify text,
+			// System-level error (very rare); assignment doesn't specify text,
 			// so a generic perror is fine.
 			perror("smash error: kill failed");
-			return -1;
+			return 1;
 		}
         // 7. Print success message 
 		printf("signal %d was sent to pid %d\n", signum, (int)pid);
@@ -313,93 +329,101 @@ int kill(char **args, int argc, job_arr *jobs)
 //###########################################################################
 int fg(char **args, int argc, job_arr *jobs)
 {
-	int job_id = -1;
-    int index = -1;
+    int job_id = -1;   // will hold the chosen job index (1..MAX_JOBS)
 
     /* ---------- argument parsing ---------- */
 
     if (argc > 1) {
         // too many args
         fprintf(stderr, "smash error: fg: invalid arguments\n");
-        return -1;
+        return 1;
     }
 
     if (argc == 1) {
-        // parse job id from args[1] since the input ;ooks like fg <num>
+        // parse job id from args[1], command looks like: fg <num>
         char *endptr;
-        long id_long = strtol(args[1], &endptr, 10); // strtol() Converts a string to a long integer
+        long id_long = strtol(args[1], &endptr, 10);
 
+        // must be: pure number, >0, within range
         if (*args[1] == '\0' || *endptr != '\0' ||
             id_long <= 0 || id_long > MAX_JOBS) {
-            fprintf(stderr, "smash error: fg: invalid arguments\n"); //We want only a positive number, no extra junk
-            return -1;
+            fprintf(stderr, "smash error: fg: invalid arguments\n");
+            return 1;
         }
 
         job_id = (int)id_long;
-        index = find_by_job_id(jobs, job_id);
-        if (index == -1) {
+
+        // check that this job id actually exists
+        if (!jobs->jobs[job_id].full) {
             fprintf(stderr, "smash error: fg: job id %d does not exist\n", job_id);
-            return -1;
+            return 1;
         }
-    } else { 
+
+    } else {
         /* argc == 0: no job id given → use job with highest id */
+
         if (jobs->job_counter == 0) {
             fprintf(stderr, "smash error: fg: jobs list is empty\n");
-            return -1;
+            return 1;
         }
 
         // find highest existing job id
         for (int j = MAX_JOBS; j >= 1; --j) {
             if (jobs->jobs[j].full) {
                 job_id = j;
-                index  = j;
                 break;
             }
         }
+
+        // very defensive: in case job_counter is out of sync
+        if (job_id == -1) {
+            fprintf(stderr, "smash error: fg: jobs list is empty\n");
+            return 1;
+        }
     }
 
-    /* at this point: job_id and index refer to a valid job */
+    /* ---------- at this point: job_id refers to a valid job ---------- */
 
-    job *j = &jobs->jobs[index];
+    job  *j   = &jobs->jobs[job_id];
     pid_t pid = j->pid;
 
-    // ---------- print job header, like "[1] /bin/sleep 30 &" ----------
+    // print job info (adjust format to what the assignment wants, if needed)
     printf("[%d] %s\n", job_id, j->command);
 
-    // ---------- if job is stopped, resume it with SIGCONT ----------
+    // if job is stopped, resume it with SIGCONT
     if (j->status == STOPPED) {
         long r = my_system_call(SYS_KILL, pid, SIGCONT);
         if (r == -1) {
             perror("smash error: fg: SIGCONT failed");
-            return -1;
+            return 1;
         }
     }
 
-    // mark as foreground job
+    // mark as foreground (in your status logic)
     j->status = FG;
 
-    // ---------- wait for job to finish ----------
-    int status = 0;
-	long w = my_system_call(SYS_WAITPID, pid, &status, WUNTRACED); //Also return if the process STOPPED (not only if it finished).
+    // ---------- wait for job to finish or stop again ----------
+    int  status = 0;
+    long w      = my_system_call(SYS_WAITPID, pid, &status, WUNTRACED);
 
-	if (w == -1) {
-		perror("smash error: fg: waitpid failed");
-		delete_job(jobs, job_id);
-		return -1;
-	}
-	/* ========== CHECK HOW PROCESS STOPPED ========== */
-	if (WIFSTOPPED(status)) {
-		//  Job was stopped (Ctrl+Z or SIGSTOP) → KEEP in list as STOPPED
-		j->status = STOPPED;
-		printf("\n");  // Clean newline
-		return 0;      // Don't delete!
-	} else {
-		// Job finished (normally or killed) → REMOVE from list
-		delete_job(jobs, job_id);
-		return 0;
+    if (w == -1) {
+        perror("smash error: fg: waitpid failed");
+        delete_job(jobs, job_id);
+        return 1;
+    }
+
+    if (WIFSTOPPED(status)) {
+        // job was stopped again (Ctrl+Z / SIGSTOP) → keep it in job list as STOPPED
+        j->status = STOPPED;
+        printf("\n");
+        return 0;
+    } else {
+        // job finished (normal exit or killed) → remove from jobs list
+        delete_job(jobs, job_id);
+        return 0;
+    }
 }
 
-}
 
 
 // ##########################################
@@ -407,85 +431,84 @@ int fg(char **args, int argc, job_arr *jobs)
 int bg(char **args, int argc, job_arr *jobs)
 {
     int job_id = -1;
-    int index = -1;
+
+    /* ---------- argument parsing ---------- */
 
     if (argc > 1) {
-        // Too many arguments
         fprintf(stderr, "smash error: bg: invalid arguments\n");
-        return -1;
+        return 1;
     }
 
     if (argc == 1) {
-        //  Parse job_id from args[1]
+        // parse job id from args[1]
         char *endptr;
-        long job_id_long = strtol(args[1], &endptr, 10); 
+        long id_long = strtol(args[1], &endptr, 10);
 
         if (*args[1] == '\0' || *endptr != '\0' ||
-            job_id_long <= 0 || job_id_long > MAX_JOBS) {
+            id_long <= 0 || id_long > MAX_JOBS) {
             fprintf(stderr, "smash error: bg: invalid arguments\n");
-            return -1;
+            return 1;
         }
 
-        job_id = (int)job_id_long;
-        
-        // Find the job
-        index = find_by_job_id(jobs, job_id);
-        if (index == -1) {
+        job_id = (int)id_long;
+
+        // ensure this job exists
+        if (!jobs->jobs[job_id].full) {
             fprintf(stderr, "smash error: bg: job id %d does not exist\n", job_id);
-            return -1;
+            return 1;
         }
+
     } else {
-        // argc == 0: No argument given so use job with highest ID
-        
+        // argc == 0: No argument given → pick highest STOPPED job
+
         if (jobs->job_counter == 0) {
             fprintf(stderr, "smash error: bg: there is no stopped job to resume\n");
-            return -1;
+            return 1;
         }
 
-        // Find the highest job_id that is STOPPED
         int found = 0;
         for (int j = MAX_JOBS; j >= 1; --j) {
             if (jobs->jobs[j].full && jobs->jobs[j].status == STOPPED) {
                 job_id = j;
-                index = j;
-                found = 1;
+                found  = 1;
                 break;
             }
         }
 
         if (!found) {
             fprintf(stderr, "smash error: bg: there is no stopped job to resume\n");
-            return -1;
+            return 1;
         }
     }
 
-    // At this point job_id and index refer to a valid job 
+    /* ---------- at this point job_id is valid ---------- */
 
-    job *j = &jobs->jobs[index];
+    job *j = &jobs->jobs[job_id];
 
-    //  if argc==1, we need to check if stopped or not
-    
-	if (j->status != STOPPED) {
-		//  the job is already running
-		fprintf(stderr, "smash error: bg: job id %d is already running in the background\n", job_id);
-		return -1;
-	}
+    // must be STOPPED to resume with bg
+    if (j->status != STOPPED) {
+        fprintf(stderr,
+                "smash error: bg: job id %d is already running in the background\n",
+                job_id);
+        return 1;
+    }
 
-    // SEND SIGCONT 
+    // Send SIGCONT to resume the job
     long ret = my_system_call(SYS_KILL, j->pid, SIGCONT);
     if (ret == -1) {
         perror("smash error: bg: SIGCONT failed");
-        return -1;
+        return 1;
     }
 
-    //  UPDATE STATUS 
+    // update status to background
     j->status = BG;
 
-    
+    // print info
     printf("%s : %d\n", j->command, j->pid);
-    
+
     return 0;
 }
+
 
 //####################################
 
@@ -493,12 +516,12 @@ int quit(char **args, int argc, job_arr *jobs)
 {
 	if (argc > 1) {
         fprintf(stderr, "smash error: quit: expected 0 or 1 arguments\n");
-        return -1;
+        return 1;
     }
 
 	if (argc == 1 && strcmp(args[1], "kill") != 0) {
         fprintf(stderr, "smash error: quit: unexpected arguments\n");
-        return -1;
+        return 1;
     }
 
 	 /* ---------- case: plain 'quit' ---------- */
@@ -587,9 +610,7 @@ int quit(char **args, int argc, job_arr *jobs)
 //########################################p
 
 
-// global argv-like array that parseCommand fills:
-char *g_argv[ARGS_NUM_MAX + 1];
-int g_is_bg = 0;  // 0 = foreground, 1 = background
+
 
 int parseCommand(char *cmd)
 {
@@ -605,6 +626,8 @@ int parseCommand(char *cmd)
             // According to the assignment, "&" appears only at the end,
             // so we can just keep parsing in case there is weird input,
             // but normally there should be no more tokens.
+            break;
+
         } else {
             g_argv[argc++] = tok;
         }
@@ -628,6 +651,7 @@ int command_Manager(int numArgs, char *original_line)
 
     // built-ins
     if (strcmp(cmd, "showpid") == 0) {
+        // argc here = number of arguments *after* the command name
         return showpid(g_argv, numArgs - 1);
 
     } else if (strcmp(cmd, "pwd") == 0) {
@@ -637,36 +661,35 @@ int command_Manager(int numArgs, char *original_line)
         return cd(g_argv, numArgs - 1);
 
     } else if (strcmp(cmd, "diff") == 0) {
-        return diff_cmd(g_argv, numArgs - 1);
+        return cmd_diff(g_argv, numArgs - 1);
 
     } else if (strcmp(cmd, "jobs") == 0) {
-        return jobs_cmd(g_argv, numArgs - 1, &job_list);
+        return jobs(g_argv, numArgs - 1, &job_list);
 
     } else if (strcmp(cmd, "kill") == 0) {
-        return kill_cmd(g_argv, numArgs - 1, &job_list);
+        return kill(g_argv, numArgs - 1, &job_list);
 
     } else if (strcmp(cmd, "fg") == 0) {
-        return fg_cmd(g_argv, numArgs - 1, &job_list);
+        return fg(g_argv, numArgs - 1, &job_list);
 
     } else if (strcmp(cmd, "bg") == 0) {
-        return bg_cmd(g_argv, numArgs - 1, &job_list);
+        return bg(g_argv, numArgs - 1, &job_list);
 
     } else if (strcmp(cmd, "quit") == 0) {
-        return quit_cmd(g_argv, numArgs - 1, &job_list);  // may _exit(0) inside
+        return quit(g_argv, numArgs - 1, &job_list);  // may _exit(0) inside
     }
 
-    // external command
+    // not a built-in -> external command
     return run_external_command(g_argv, original_line);
 }
 
 
 
+
 //###################################################################
 
-int run_external_command(char **argv,  const char *original_line)
+int run_external_command(char **argv, const char *original_line)
 {
-    
-
     // ---------- fork a child process ----------
     pid_t pid = (pid_t)my_system_call(SYS_FORK);
     if (pid < 0) {
@@ -679,22 +702,16 @@ int run_external_command(char **argv,  const char *original_line)
         // Put the child in a new process group (required for job control)
         setpgrp();
 
-        // Try to exec the external program.
-        // If execvp succeeds, it never returns.
         long rv = my_system_call(SYS_EXECVP, argv[0], argv);
 
         // If we got here, exec failed.
-        // Check errno to decide which error message to print.
         if (rv == -1) {
             if (errno == ENOENT) {
-                // Program file not found
                 fprintf(stderr, "smash error: external: cannot find program\n");
             } else {
-                // Some other exec error
                 fprintf(stderr, "smash error: external: invalid command\n");
             }
         } else {
-            // Very defensive, normally exec failure should set rv == -1
             fprintf(stderr, "smash error: external: invalid command\n");
         }
 
@@ -704,53 +721,59 @@ int run_external_command(char **argv,  const char *original_line)
     /* ================= PARENT PROCESS (smash) ================= */
 
     if (g_is_bg) {
-        /* ---------- background command ----------
-         * Do NOT wait for it.
-         * Just add to jobs list with status BG.
-         */
+        // ---------- background command ----------
         int job_id = add_job(&job_list, pid, original_line, BG);
         if (job_id == -1) {
             fprintf(stderr, "smash error: jobs list is full\n");
-            // We don't kill the process, just can't track it as a job.
+            // process still runs, we just don't track it
         }
-        // Return immediately to main loop (next prompt).
-        return 0;
-    } 
-     /* ---------- foreground command ---------- */
-     int job_id = add_job(&job_list, pid, original_line, FG);
-     int status = 0;
- 
-     long wr = my_system_call(SYS_WAITPID, pid, &status, WUNTRACED); //Waits until the child exits or is stopped
-     if (wr == -1) {
-         perror("smash error: waitpid failed");
-         if (job_id != -1)
-             delete_job(&job_list, job_id);
-         return 1;
-     }
- 
-     // If the process was stopped (Ctrl+Z), keep it as STOPPED job
-     // and treat as "not successful" for &&.
-     if (WIFSTOPPED(status)) {
-         if (job_id != -1)
-             job_list.jobs[job_id].status = STOPPED;
-         return 1;   // it did not "complete successfully"
-     }
- 
-     // Process finished (normal or killed)
-     int exit_code = 1;   // default: failure
- 
-     if (WIFEXITED(status)) {
-         exit_code = WEXITSTATUS(status);   // program's real return value
-     } else if (WIFSIGNALED(status)) {
-         exit_code = 1;   // killed by signal -> treat as failure
-     }
- 
-     if (job_id != -1)
-         delete_job(&job_list, job_id);
- 
-     // success if child returned 0, otherwise failure
-     return (exit_code == 0) ? 0 : 1;
- }
+        return 0;  // bg command itself "succeeds"
+    }
+
+    /* ---------- foreground command ---------- */
+
+    // Put FG job into slot 0
+    int job_id = add_job(&job_list, pid, original_line, FG);
+    int status = 0;
+
+    long wr = my_system_call(SYS_WAITPID, pid, &status, WUNTRACED);
+    if (wr == -1) {
+        perror("smash error: waitpid failed");
+        clear_fg_job(&job_list);   // make sure fg slot is not left dirty
+        return 1;
+    }
+
+    // If the process was stopped (Ctrl+Z), move it into jobs[1..] as STOPPED
+    if (WIFSTOPPED(status)) {
+        job *fgj = &job_list.jobs[0];
+
+        // Try to add it as a STOPPED BG job with a real job id
+        if (fgj->full) {
+            if (add_job(&job_list, fgj->pid, fgj->command, STOPPED) == -1) {
+                fprintf(stderr, "smash error: jobs list is full\n");
+                // If this fails, we at least clear the fg slot; process is still stopped in OS
+            }
+        }
+
+        clear_fg_job(&job_list);
+        return 1;   // did not complete successfully → fail for &&
+    }
+
+    // Process finished (normal exit or killed)
+    int exit_code = 1;   // default: failure
+
+    if (WIFEXITED(status)) {
+        exit_code = WEXITSTATUS(status);   // program's return value
+    } else if (WIFSIGNALED(status)) {
+        exit_code = 1;                     // killed by signal → treat as failure
+    }
+
+    clear_fg_job(&job_list);
+
+    // success if child returned 0, otherwise failure
+    return (exit_code == 0) ? 0 : 1;
+}
+
 
 //###################################
 
@@ -773,48 +796,72 @@ static char* trim_spaces(char *s)
 
 int handle_compound_commands(char *line)
 {
-    char buffer[CMD_LENGTH_MAX];
-    strcpy(buffer, line); //copy the line
+    char buffer[CMD_LENGTH_MAX + 1];
+    strncpy(buffer, line, CMD_LENGTH_MAX);
+    buffer[CMD_LENGTH_MAX] = '\0';
 
-    char *nextPart = buffer; //points to the part of the string we are currently processing.
-    int final_status = 0;  //will remember the result of the last executed command.
+    char *nextPart = buffer;  // part we are currently processing
+    int final_status = 0;     // result of last executed command
 
     while (1) {
-        // Look for &&
+        // Look for "&&" in the remaining string
         char *andPos = strstr(nextPart, "&&");
 
+        // This will hold the current simple command (trimmed)
+        char *cmd_segment = NULL;
+
         if (!andPos) {
-            // There is no more &&
-            // so nextPart is the final command
-            char *cmd = trim_spaces(nextPart);
+            // No more "&&" -> nextPart is the final command
+            cmd_segment = trim_spaces(nextPart);
 
-            // Execute the command
-            int argc = parseCommand(cmd);
-            final_status = command_Manager(argc, cmd);
+            // If empty after trimming, nothing to do
+            if (cmd_segment[0] == '\0') {
+                return final_status;  // whatever happened before
+            }
 
-            // return the last status (success/failure)
+            // Make a copy for parseCommand (because it uses strtok and modifies string)
+            char cmd_for_parse[CMD_LENGTH_MAX + 1];
+            strncpy(cmd_for_parse, cmd_segment, CMD_LENGTH_MAX);
+            cmd_for_parse[CMD_LENGTH_MAX] = '\0';
+
+            int argc = parseCommand(cmd_for_parse);
+            if (argc == 0) {
+                return final_status;
+            }
+
+            final_status = command_Manager(argc, cmd_segment);
             return final_status;
         }
 
-        // Cut the line at &&
+        // Cut the buffer at "&&"
         *andPos = '\0';
 
-        // Get the left command
-        char *cmd = trim_spaces(nextPart);
+        // Left part is the next command
+        cmd_segment = trim_spaces(nextPart);
 
-        // Execute it
-        int argc = parseCommand(cmd);
-        int status = command_Manager(argc, cmd);
+        // Skip empty left segment
+        if (cmd_segment[0] != '\0') {
+            // Make a copy for parsing
+            char cmd_for_parse[CMD_LENGTH_MAX + 1];
+            strncpy(cmd_for_parse, cmd_segment, CMD_LENGTH_MAX);
+            cmd_for_parse[CMD_LENGTH_MAX] = '\0';
 
-        if (status != 0) {
-            // it failed → do NOT execute the rest
-            return status;
+            int argc = parseCommand(cmd_for_parse);
+            if (argc > 0) {
+                int status = command_Manager(argc, cmd_segment);
+                if (status != 0) {
+                    // This command failed -> stop executing further
+                    return status;
+                }
+                final_status = status;
+            }
         }
 
-        // Continue with the right side after &&
+        // Continue with the right side, after the "&&"
         nextPart = andPos + 2;
     }
 }
+
 
 
 
