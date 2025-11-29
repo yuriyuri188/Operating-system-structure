@@ -55,10 +55,7 @@ void print_fg_job(job_arr* arr);
 /*=============================================================================
 * job manipulation
 =============================================================================*/
-int add_job(job_arr* arr,
-            pid_t pid,
-            char status,
-            const char* command);
+int add_job(job_arr* arr, pid_t pid, char status, const char* command);
 
 int move_job_to_fg(job_arr* arr, pid_t pid);
 void remove_job_from_fg(job_arr* arr);
@@ -67,5 +64,7 @@ void remove_job_from_fg(job_arr* arr);
 * delete
 =============================================================================*/
 void delete_job(job_arr* arr, pid_t pid);
+
+void delete_complex_job(job_arr* arr, pid_t complex_pid, int complex_i, int   smallest_free_id);
 
 #endif /* JOBS_H */
