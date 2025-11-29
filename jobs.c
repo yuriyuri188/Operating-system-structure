@@ -4,7 +4,8 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <stdbool.h>
-
+#include <sys/wait.h>
+#include <unistd.h>
 
 #define FG       '1'
 #define BG       '2'
@@ -51,7 +52,7 @@ void init_job_arr(job_arr* arr) {
 
 
 /*=============================================================================
-* 
+* helpers
 =============================================================================*/
 
 int find_by_id(job_arr* arr, pid_t pid) {
@@ -74,6 +75,10 @@ int job_status_change (job_arr* arr, pid_t pid, char cur_status){
     return 1;    
 }
 
+/*=============================================================================
+* printing
+=============================================================================*/
+
 void print_all_bg_jobs(job_arr* arr) {
     for (int j = 1; j < MAX_ARGS + 1; j++) {
         if (arr->jobs[j].full) {
@@ -93,7 +98,11 @@ void print_all_bg_jobs(job_arr* arr) {
 }
 
 void print_fg_job(job_arr* arr) {
-     printf("[%d] %s: %d %ld secs",
+    if (!arr->jobs[0].full)
+        return;
+
+    
+    printf("[%d] %s: %d %ld secs",
                    0,
                    arr->jobs[0].command,
                    arr->jobs[0].pid,
@@ -101,8 +110,11 @@ void print_fg_job(job_arr* arr) {
             );
 }
 
+/*=============================================================================
+* job manipulation
+=============================================================================*/
 
-int move_job_to_fg(job_arr* arr, pid_t pid){
+int move_job_to_fg(job_arr* arr, pid_t pid){   
     for (int j = 1; j < MAX_ARGS + 1; j++) {
         if (arr->jobs[j].pid == pid) {
             arr->jobs[0].pid = pid;
@@ -111,6 +123,7 @@ int move_job_to_fg(job_arr* arr, pid_t pid){
             arr->jobs[0].status = FG;
             arr->jobs[j].full = false;
             arr->jobs[0].full = true;
+            
             if (smallest_free_id > j) {
                 smallest_free_id = j;
             }
@@ -121,44 +134,26 @@ int move_job_to_fg(job_arr* arr, pid_t pid){
     return 1;
 }
 
-void remove_job_from_fg(job_arr* arr){
-    
-    if(){ //job stopped because cntrl z
+void remove_job_from_fg(job_arr* arr, pid_t pid, char cur_status){ 
+    if (cur_status == 1) {
         arr->jobs[0].status = STOPPED;
-        add_job(arr, 0, STOPPED);  //not complete
-    }
-    
-    else if(pid == jobs[0].pid)							//fg reaped
-		arr->jobs[0].full = false;
-        arr->jobs[0].pid=getpid();
-	return;
-}
 
-
-void delete_complex_job(job_arr* arr, pid_t complex_pid, int complex_i, int smallest_free_id) {
-
-    if (complex_i < 1 || complex_i > MAX_ARGS) {
-        printf("smash error: invalid job index\n");
-        return;
+        add_job(arr,
+                pid,
+                STOPPED,
+                arr->jobs[0].command);
     }
 
-    if (arr->jobs[complex_i].pid != complex_pid || !arr->jobs[complex_i].full) {
-        printf("smash error: job not found\n");
-        return;
+    else if (pid == arr->jobs[0].pid) {
+        arr->jobs[0].full = false;
+        arr->jobs[0].pid = getpid();
     }
-
-
-    if (smallest_free_id > complex_i) {
-        smallest_free_id = complex_i;
-    }
-
-    arr->jobs[complex_i].full = 0;
-   // init_job(&arr->jobs[complex_i]);
 
     return;
 }
 
-int add_job(job_arr* arr, pid_t pid, char cur_status){
+
+int add_job(job_arr* arr, pid_t pid, char cur_status, const char* command){  // to change - counter
     
     int id = arr->smallest_free_id;
 
@@ -196,11 +191,40 @@ int add_job(job_arr* arr, pid_t pid, char cur_status){
     return 0;
 }
 
+/*=============================================================================
+* delete functions
+=============================================================================*/
+// tho change
+void delete_complex_job(job_arr* arr, pid_t complex_pid, int complex_i, int smallest_free_id) {                                                            
+
+    if (complex_i < 1 || complex_i > MAX_ARGS) {
+        printf("smash error: invalid job index\n");
+        return;
+    }
+
+    if (arr->jobs[complex_i].pid != complex_pid || !arr->jobs[complex_i].full) {
+        printf("smash error: job not found\n");
+        return;
+    }
 
 
+    if (smallest_free_id > complex_i) {
+        smallest_free_id = complex_i;
+    }
 
-void delete_job(){
+    arr->jobs[complex_i].full = 0;
+   // init_job(&arr->jobs[complex_i]);
+
+    return;
+}
+
+void delete_job(job_arr* arr){ // to change - counter
+
+    int cur_status;	
+	pid_t pid;
+
     for (int j = 1; j <= MAX_ARGS + 1; j++) {
+        
         if (arr->jobs[j].full) {
             
             if (smallest_free_id > j) {

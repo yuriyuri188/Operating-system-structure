@@ -1,9 +1,9 @@
-// signals.c
 #include <stdio.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
-#include "classes.h"
+
+#include "jobs.h"
 #include "signals.h"
 
 extern job_arr job_list;
@@ -13,7 +13,7 @@ extern job_arr job_list;
    ---------------------------------------------------------- */
 
 static int is_foreground_job_active() {
-    return job_list.jobs[0].full && job_list.jobs[0].is_external;
+    return job_list.jobs[0].full;
 }
 
 static pid_t get_foreground_pid() {
@@ -35,7 +35,7 @@ static void restore_signal_mask(sigset_t* previous_mask) {
    ---------------------------------------------------------- */
 void install_signal_handlers() {
 
-    struct sigaction sa_sigint = {0};    
+    struct sigaction sa_sigint = {0};
     sa_sigint.sa_handler = ctrl_c;
     sa_sigint.sa_flags = SA_RESTART;
     sigemptyset(&sa_sigint.sa_mask);
@@ -55,19 +55,21 @@ void ctrl_c(int sig) {
     sigset_t previous_mask;
     block_all_signal_delivery(&previous_mask);
 
-    printf("\nsmash: caught CTRL+C\nsmash > ");
+    printf("\nsmash: caught CTRL+C\n");
     fflush(stdout);
 
     if (is_foreground_job_active()) {
         pid_t pid = get_foreground_pid();
         if (kill(pid, SIGKILL) == 0) {
             printf("smash: process %d was killed\n", pid);
+            int cur_status = 0; 
+            remove_job_from_fg(&job_list, pid, cur_status);
         } else {
             perror("smash error: kill failed");
         }
-        fflush(stdout);
     }
 
+    fflush(stdout);
     restore_signal_mask(&previous_mask);
 }
 
@@ -84,13 +86,14 @@ void ctrl_z(int sig) {
     if (is_foreground_job_active()) {
         pid_t pid = get_foreground_pid();
         if (kill(pid, SIGSTOP) == 0) {
-            printf("smash: process %d was stopped\n");
-            fflush(stdout);
-            job_list.remove_job_from_fg(pid, 1);
+            printf("smash: process %d was stopped\n", pid);  
+            int cur_status = (1 << 8);        
+            remove_job_from_fg(&job_list, pid, cur_status);
         } else {
             perror("smash error: kill failed");
         }
     }
 
+    fflush(stdout);
     restore_signal_mask(&previous_mask);
 }
