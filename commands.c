@@ -9,6 +9,7 @@
 #include <sys/wait.h>
 #include <limits.h>     // PATH_MAX
 #include "jobs.h"
+#include <stdlib.h>   // malloc, free
 
 
 
@@ -21,6 +22,82 @@ char *g_argv[ARGS_NUM_MAX + 1];
 // 1 if the current command should run in background (ends with '&')
 int g_is_bg = 0;
 
+
+
+
+/* ================= ALIAS DATA STRUCTURE ================= */
+
+typedef struct Alias {
+    char name[CMD_LENGTH_MAX];   // alias name
+    char value[CMD_LENGTH_MAX];  // expanded command line
+    struct Alias *next;
+} Alias;
+
+static Alias *alias_head = NULL;
+
+/* protect against infinite recursion: a->b, b->a, etc. */
+#define MAX_ALIAS_EXPANSION_DEPTH 10
+static int alias_expansion_depth = 0;
+
+/* find alias node by name (internal helper) */
+static Alias* find_alias_node(const char *name)
+{
+    for (Alias *cur = alias_head; cur != NULL; cur = cur->next) {
+        if (strcmp(cur->name, name) == 0)
+            return cur;
+    }
+    return NULL;
+}
+
+/* get alias value or NULL if not found */
+static const char* find_alias_value(const char *name)
+{
+    Alias *node = find_alias_node(name);
+    return node ? node->value : NULL;
+}
+
+/* create or update alias */
+static void set_alias(const char *name, const char *value)
+{
+    Alias *node = find_alias_node(name);
+    if (!node) {
+        node = (Alias*)malloc(sizeof(Alias));
+        if (!node) {
+            fprintf(stderr, "smash error: alias: malloc failed\n");
+            return;
+        }
+        strncpy(node->name, name, CMD_LENGTH_MAX - 1);
+        node->name[CMD_LENGTH_MAX - 1] = '\0';
+        node->next = alias_head;
+        alias_head = node;
+    }
+
+    strncpy(node->value, value, CMD_LENGTH_MAX - 1);
+    node->value[CMD_LENGTH_MAX - 1] = '\0';
+}
+
+/* remove alias by name, return 1 if removed, 0 if not found */
+static int remove_alias(const char *name)
+{
+    Alias *prev = NULL;
+    Alias *cur  = alias_head;
+
+    while (cur) {
+        if (strcmp(cur->name, name) == 0) {
+            if (prev)
+                prev->next = cur->next;
+            else
+                alias_head = cur->next;
+            free(cur);
+            return 1;
+        }
+        prev = cur;
+        cur  = cur->next;
+    }
+    return 0;
+}
+
+/* ================= END OF ALIAS DATA STRUCTURE ================= */
 
 
 //example function for printing errors from internal commands
@@ -649,7 +726,47 @@ int command_Manager(int numArgs, char *original_line)
 
     char *cmd = g_argv[0];
 
-    // built-ins
+    /* ---------- alias & unalias builtins (not alias-expanded) ---------- */
+    if (strcmp(cmd, "alias") == 0) {
+        return alias_cmd(g_argv, numArgs - 1, original_line);
+    }
+
+    if (strcmp(cmd, "unalias") == 0) {
+        return unalias_cmd(g_argv, numArgs - 1);
+    }
+
+    /* ---------- alias EXPANSION for other commands ---------- */
+    const char *expansion = find_alias_value(cmd);
+    if (expansion != NULL) {
+        if (alias_expansion_depth >= MAX_ALIAS_EXPANSION_DEPTH) {
+            fprintf(stderr, "smash error: alias: expansion too deep (possible recursion)\n");
+            return 1;
+        }
+
+        alias_expansion_depth++;
+
+        char buf[CMD_LENGTH_MAX];
+        strncpy(buf, expansion, CMD_LENGTH_MAX - 1);
+        buf[CMD_LENGTH_MAX - 1] = '\0';
+
+        int ret;
+        if (strstr(buf, "&&") != NULL) {
+            // expansion itself may contain '&&'
+            ret = handle_compound_commands(buf);
+        } else {
+            char tmp[CMD_LENGTH_MAX];
+            strcpy(tmp, buf);
+            int argc2 = parseCommand(tmp);
+            ret = command_Manager(argc2, buf);
+        }
+
+        alias_expansion_depth--;
+        return ret;
+    }
+
+
+/* ---------- built-ins commands --------------------------------------- */
+    
     if (strcmp(cmd, "showpid") == 0) {
         // argc here = number of arguments *after* the command name
         return showpid(g_argv, numArgs - 1);
@@ -862,7 +979,102 @@ int handle_compound_commands(char *line)
     }
 }
 
+//#########################################################################################
 
+/* alias: alias name="some commands" */
+int alias_cmd(char **args, int argc, const char *original_line)
+{
+    (void)args;  // we ignore tokenized args; we re-parse from original_line
+
+    // must have at least a name after "alias"
+    if (argc < 1) {
+        fprintf(stderr, "smash error: alias: invalid arguments\n");
+        return 1;
+    }
+
+    const char *p = original_line;
+
+    // skip leading spaces
+    while (*p == ' ' || *p == '\t') p++;
+
+    // must start with "alias"
+    if (strncmp(p, "alias", 5) != 0) {
+        fprintf(stderr, "smash error: alias: invalid arguments\n");
+        return 1;
+    }
+    p += 5;
+
+    // skip spaces after 'alias'
+    while (*p == ' ' || *p == '\t') p++;
+
+    // parse alias name: up to '=' or whitespace
+    char name_buf[CMD_LENGTH_MAX];
+    int ni = 0;
+    while (*p && *p != '=' && *p != ' ' && *p != '\t' && ni < CMD_LENGTH_MAX - 1) {
+        name_buf[ni++] = *p++;
+    }
+    name_buf[ni] = '\0';
+
+    if (ni == 0) {
+        fprintf(stderr, "smash error: alias: invalid name\n");
+        return 1;
+    }
+
+    // skip spaces before '='
+    while (*p == ' ' || *p == '\t') p++;
+
+    if (*p != '=') {
+        fprintf(stderr, "smash error: alias: invalid arguments\n");
+        return 1;
+    }
+    p++; // skip '='
+
+    // skip spaces before value
+    while (*p == ' ' || *p == '\t') p++;
+
+    // parse value
+    char value_buf[CMD_LENGTH_MAX];
+
+    if (*p == '"') {
+        // quoted value: alias x="......"
+        p++;  // skip opening quote
+        int vi = 0;
+        while (*p && *p != '"' && vi < CMD_LENGTH_MAX - 1) {
+            value_buf[vi++] = *p++;
+        }
+        value_buf[vi] = '\0';
+        // if closing quote is missing, we just stop at end-of-line
+    } else {
+        // unquoted: copy rest of line and trim spaces using your existing trim_spaces
+        char tmp[CMD_LENGTH_MAX];
+        strncpy(tmp, p, CMD_LENGTH_MAX - 1);
+        tmp[CMD_LENGTH_MAX - 1] = '\0';
+
+        char *trimmed = trim_spaces(tmp);   // your existing function
+        strncpy(value_buf, trimmed, CMD_LENGTH_MAX - 1);
+        value_buf[CMD_LENGTH_MAX - 1] = '\0';
+    }
+
+    // store or update alias
+    set_alias(name_buf, value_buf);
+    return 0;
+}
+
+
+//###############################################################################
+
+int unalias_cmd(char **args, int argc)
+{
+    if (argc != 1) {
+        fprintf(stderr, "smash error: unalias: invalid arguments\n");
+        return 1;
+    }
+
+    const char *name = args[1];
+    // removing a non-existing alias is just a no-op
+    (void)remove_alias(name);
+    return 0;
+}
 
 
 
