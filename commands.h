@@ -102,6 +102,10 @@ int run_external_command(char **argv, const char *original_line);
 int handle_compound_commands(char *line);
 
 
+int alias_cmd(char **args, int argc, const char *original_line);
+
+int unalias_cmd(char **args, int argc);
+
 
 
 #endif //COMMANDS_H
